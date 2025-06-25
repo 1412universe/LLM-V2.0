@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能问答</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.5.0/styles/default.min.css">
+    <style>
+        :root {
+            --user-bg: #e3f2fd;
+            --ai-bg: #f5f5f5;
+            --primary: #2196f3;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: #fafafa;
+        }
+
+        header {
+            background: white;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            z-index: 100;
+        }
+
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: white;
+        }
+
+        .message {
+            display: flex;
+            gap: 1rem;
+            max-width: 800px;
+            margin: 1rem auto;
+            padding: 1rem;
+        }
+
+        .user-message {
+            flex-direction: row-reverse;
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .user-avatar {
+            background: var(--primary);
+            color: white;
+            text-align: center;
+            line-height: 32px;
+        }
+
+        .ai-avatar {
+            background: #666;
+            color: white;
+            text-align: center;
+            line-height: 32px;
+        }
+
+        .content {
+            padding: 1rem;
+            border-radius: 8px;
+            max-width: calc(100% - 48px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            line-height: 1.6;
+        }
+
+        .user-content {
+            background: var(--user-bg);
+            border-radius: 8px 8px 0 8px;
+        }
+
+        .ai-content {
+            background: var(--ai-bg);
+            border-radius: 8px 8px 8px 0;
+        }
+
+        pre {
+            background: rgba(0,0,0,0.05)!important;
+            padding: 1rem!important;
+            border-radius: 4px!important;
+            overflow-x: auto;
+        }
+
+        code {
+            font-family: 'SFMono-Regular', Consolas, monospace!important;
+        }
+
+        #input-container {
+            position: relative;
+            background: white;
+            padding: 1rem;
+            box-shadow: 0 -2px 4px rgba(0,0,0,0.05);
+        }
+
+        #input-wrapper {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            gap: 1rem;
+        }
+
+        #question {
+            flex: 1;
+            padding: 0.8rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            min-height: 44px;
+            max-height: 200px;
+            overflow-y: auto;
+            resize: none;
+        }
+
+        button {
+            padding: 0 1.5rem;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .loading {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background: var(--ai-bg);
+            border-radius: 4px;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .dot-flashing {
+            position: relative;
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background-color: #999;
+            color: #999;
+            animation: dotFlashing 1s infinite linear alternate;
+            animation-delay: 0.5s;
+            margin-left: 8px;
+        }
+
+        .dot-flashing::before,
+        .dot-flashing::after {
+            content: '';
+            display: inline-block;
+            position: absolute;
+            top: 0;
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background-color: #999;
+            color: #999;
+        }
+
+        .dot-flashing::before {
+            left: -10px;
+            animation: dotFlashing 1s infinite alternate;
+            animation-delay: 0s;
+        }
+
+        .dot-flashing::after {
+            left: 10px;
+            animation: dotFlashing 1s infinite alternate;
+            animation-delay: 1s;
+        }
+
+        @keyframes dotFlashing {
+            0% { background-color: #999; }
+            50%, 100% { background-color: rgba(153,153,153,0.2); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1 style="margin:0; color: #333; font-size: 1.2rem;">智能问答</h1>
+    </header>
+    <div id="chat-container"></div>
+    <div id="input-container">
+        <div id="input-wrapper">
+            <textarea id="question" placeholder="输入你的问题，Shift+Enter换行" rows="1"></textarea>
+            <button onclick="sendQuestion()">发送</button>
+        </div>
+    </div>
+
+    <!-- 使用Django模板标签获取CSRF令牌 -->
+    {% csrf_token %}
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.0.18/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.5.0/highlight.min.js"></script>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const questionInput = document.getElementById('question');
+
+        // 获取CSRF令牌
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+        // 初始化Markdown渲染
+        marked.setOptions({
+            highlight: function(code, lang) {
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true
+        });
+
+        // 自动调整输入框高度
+        questionInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+
+        // 支持Enter发送，Shift+Enter换行
+        questionInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendQuestion();
+            }
+        });
+
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}-message`;
+
+            const avatar = document.createElement('div');
+            avatar.className = `avatar ${role}-avatar`;
+            avatar.textContent = role === 'user' ? '👤' : '🤖';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = `content ${role}-content`;
+            contentDiv.innerHTML = marked.parse(content);
+
+            messageDiv.append(avatar, contentDiv);
+            chatContainer.appendChild(messageDiv);
+            messageDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showLoading() {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ai-message';
+
+            const avatar = document.createElement('div');
+            avatar.className = 'avatar ai-avatar';
+            avatar.textContent = '🤖';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'loading';
+            contentDiv.innerHTML = 'AI正在思考中<span class="dot-flashing"></span>';
+
+            messageDiv.append(avatar, contentDiv);
+            chatContainer.appendChild(messageDiv);
+            messageDiv.scrollIntoView({ behavior: 'smooth' });
+            return messageDiv;
+        }
+
+        async function sendQuestion() {
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            questionInput.value = '';
+            addMessage('user', question);
+
+            const loadingElement = showLoading();
+
+            try {
+                const response = await fetch('chat/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({
+                        question: question
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('请求失败');
+                }
+
+                const data = await response.json();
+                loadingElement.remove();
+                addMessage('ai', data.answer);
+            } catch (error) {
+                loadingElement.remove();
+                addMessage('ai', `请求失败: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>
